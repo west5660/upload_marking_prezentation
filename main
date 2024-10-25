@@ -1,0 +1,78 @@
+import asyncio
+import json
+import os
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse, urljoin
+import pandas as pd
+from crowd_sdk.tagme import TagmeClientAdvanced
+from crowd_sdk.tagme.http_client.datacls import FileMetaData, TaskFile, TaskDataRequest
+from tqdm import tqdm
+
+
+
+
+
+
+
+def construct_config(config: dict) -> dict:
+    if config['netloc'] == 'tagme.apps.prom-gen.sigma.sbrf.ru':
+        config['config_path'] = os.path.expanduser('~/configs/.sigma.cfg')
+        config['task_params'] = ['K3', '-']
+    elif config['netloc'] == 'tagme.sberdevices.ru':
+        config['config_path'] = os.path.expanduser('~/configs/.cloud.cfg')
+    return config
+
+
+def parse_url(tg_url: str) -> dict:
+    parsed_url = urlparse(tg_url)
+    config = parsed_url.path.split('/')
+    try:
+        return {
+            'netloc': parsed_url.netloc,
+            'org_id': config[2],
+            'project_id': config[4],
+            # 'task_id': config[6]
+        }
+    except IndexError:
+        raise ValueError('Вы ввели некорректный URL.')
+
+
+async def create_tasks(client: TagmeClientAdvanced, config: dict, input_folder: str):
+    project = await client.get_project(project_id=config['project_id'], organization_id=config['org_id'])
+
+    list_folder = os.listdir(input_folder)
+    for index, f in enumerate(list_folder, start=1):
+        path_dir = os.path.join(input_folder, f)
+        if os.path.isdir(path_dir):
+            task_data = TaskDataRequest(
+                    name=f'pool_{index}',
+                    organization_id=project.organization_id,
+                    project_id=project.uid,
+                    overlap=1,
+                    item_timeout_seconds=900
+                )
+
+            new_task = await client.create_task(
+                task=task_data,
+                organization_id=project.organization_id
+            )
+
+            files_to_upload = [os.path.join(path_dir, file) for file in os.listdir(path_dir)]
+            await client.upload_files(task_id=new_task.uid,
+                                      filepaths=files_to_upload,
+                                      organization_id=project.organization_id)
+
+
+async def main():
+    project_url = input("Введите ссылку на проект для загрузки: ")
+    input_folder = input("Введите путь к папке с файлами для загрузки: ")
+
+    config = parse_url(project_url)
+    client = TagmeClientAdvanced(construct_config(config)['config_path'])
+    await create_tasks(client, config, input_folder)
+
+if __name__ == '__main__':
+    asyncio.run(main())
